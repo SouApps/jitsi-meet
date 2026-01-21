@@ -659,6 +659,12 @@ export class VideoContainer extends LargeContainer {
             return;
         }
 
+        const container = document.getElementById('largeVideoBackgroundContainer');
+
+        if (!container) {
+            return;
+        }
+
         ReactDOM.render(
             <LargeVideoBackground
                 hidden = { this._hideBackground || this._isHidden }
@@ -670,7 +676,7 @@ export class VideoContainer extends LargeContainer {
                 orientationFit = { this._backgroundOrientation }
                 videoElement = { this.video }
                 videoTrack = { this.stream } />,
-            document.getElementById('largeVideoBackgroundContainer')
+            container
         );
     }
 }

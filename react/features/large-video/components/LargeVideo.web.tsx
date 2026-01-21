@@ -221,8 +221,6 @@ class LargeVideo extends Component<IProps> {
                 {_whiteboardEnabled && <Whiteboard />}
                 <div id = 'etherpad' />
 
-                <Watermarks />
-
                 <div
                     id = 'dominantSpeaker'
                     onTouchEnd = { this._onDoubleTap }>
@@ -232,7 +230,6 @@ class LargeVideo extends Component<IProps> {
                 <div id = 'remotePresenceMessage' />
                 <span id = 'remoteConnectionMessage' />
                 <div id = 'largeVideoElementsContainer'>
-                    <div id = 'largeVideoBackgroundContainer' />
                     {/*
                       * FIXME: the architecture of elements related to the large
                       * video and the naming. The background is not part of
