@@ -5,6 +5,7 @@ const fs = require('fs');
 const { join, resolve } = require('path');
 const process = require('process');
 const webpack = require('webpack');
+const TerserPlugin = require('terser-webpack-plugin');
 const { BundleAnalyzerPlugin } = require('webpack-bundle-analyzer');
 
 /**
@@ -32,6 +33,31 @@ function getPerformanceHints(options, size) {
         maxAssetSize: size,
         maxEntrypointSize: size
     };
+}
+
+/**
+ * Determine the terser parallelism from the environment.
+ *
+ * @returns {boolean|number} The parallel setting for terser-webpack-plugin.
+ */
+function getTerserParallel() {
+    const value = process.env.TERSER_PARALLEL;
+
+    if (value === undefined || value === '') {
+        return true;
+    }
+
+    if (value === 'false' || value === '0') {
+        return false;
+    }
+
+    const parsed = Number.parseInt(value, 10);
+
+    if (Number.isNaN(parsed)) {
+        return true;
+    }
+
+    return Math.max(parsed, 1);
 }
 
 /**
@@ -102,6 +128,23 @@ function devServerProxyBypass({ path }) {
  */
 function getConfig(options = {}) {
     const { detectCircularDeps, isProduction } = options;
+    const optimization = {
+        concatenateModules: isProduction,
+        minimize: isProduction
+    };
+
+    if (isProduction) {
+        optimization.minimizer = [
+            new TerserPlugin({
+                parallel: getTerserParallel(),
+                terserOptions: {
+                    compress: {
+                        passes: 2
+                    }
+                }
+            })
+        ];
+    }
 
     return {
         devtool: isProduction ? 'source-map' : 'eval-source-map',
@@ -191,10 +234,7 @@ function getConfig(options = {}) {
             // value that is a mock (/index.js).
             __filename: true
         },
-        optimization: {
-            concatenateModules: isProduction,
-            minimize: isProduction
-        },
+        optimization,
         output: {
             filename: `[name]${isProduction ? '.min' : ''}.js`,
             path: `${__dirname}/build`,
