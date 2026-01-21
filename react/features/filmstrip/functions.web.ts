@@ -697,6 +697,72 @@ export function isFilmstripScrollVisible(state: IReduxState) {
 }
 
 /**
+ * Returns the list of remote participants to be displayed in the main filmstrip.
+ * The participant shown on the large video is omitted when not in tile view.
+ *
+ * @param {Object} state - Redux state.
+ * @returns {Array<string>}
+ */
+let cachedRemoteParticipants: Array<string> | null = null;
+let cachedLargeVideoParticipantId: string | undefined;
+let cachedLayout: string | undefined;
+let cachedFilteredParticipants: Array<string> | null = null;
+
+export function getRemoteParticipantsForFilmstrip(state: IReduxState) {
+    const { remoteParticipants } = state['features/filmstrip'];
+    const _currentLayout = getCurrentLayout(state);
+    const largeVideoParticipantId = state['features/large-video']?.participantId;
+
+    if (cachedRemoteParticipants === remoteParticipants
+            && cachedLargeVideoParticipantId === largeVideoParticipantId
+            && cachedLayout === _currentLayout
+            && cachedFilteredParticipants) {
+        return cachedFilteredParticipants;
+    }
+
+    let filteredParticipants = remoteParticipants;
+
+    if (_currentLayout !== LAYOUTS.TILE_VIEW
+            && largeVideoParticipantId
+            && remoteParticipants.includes(largeVideoParticipantId)) {
+        filteredParticipants = remoteParticipants.filter(id => id !== largeVideoParticipantId);
+    }
+
+    cachedRemoteParticipants = remoteParticipants;
+    cachedLargeVideoParticipantId = largeVideoParticipantId;
+    cachedLayout = _currentLayout;
+    cachedFilteredParticipants = filteredParticipants;
+
+    return filteredParticipants;
+}
+
+/**
+ * Returns which local thumbnails should be hidden when the local participant
+ * (camera or screenshare) is on the large video.
+ *
+ * @param {Object} state - Redux state.
+ * @returns {Object}
+ */
+export function getHiddenLocalParticipants(state: IReduxState) {
+    const _currentLayout = getCurrentLayout(state);
+    const largeVideoParticipantId = state['features/large-video']?.participantId;
+    const localParticipantId = getLocalParticipant(state)?.id;
+    const localScreenShareId = state['features/base/participants'].localScreenShare?.id;
+
+    if (_currentLayout === LAYOUTS.TILE_VIEW || !largeVideoParticipantId) {
+        return {
+            hideLocalCamera: false,
+            hideLocalScreenShare: false
+        };
+    }
+
+    return {
+        hideLocalCamera: localParticipantId === largeVideoParticipantId,
+        hideLocalScreenShare: localScreenShareId === largeVideoParticipantId
+    };
+}
+
+/**
  * Gets the ids of the active participants.
  *
  * @param {Object} state - Redux state.

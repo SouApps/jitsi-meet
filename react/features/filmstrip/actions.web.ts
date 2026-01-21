@@ -2,8 +2,7 @@ import { IStore } from '../app/types';
 import { pinParticipant } from '../base/participants/actions';
 import {
     getLocalParticipant,
-    getParticipantById,
-    getRemoteParticipantCountWithFake
+    getParticipantById
 } from '../base/participants/functions';
 import { getHideSelfView } from '../base/settings/functions.any';
 import { getMaxColumnCount } from '../video-layout/functions.web';
@@ -49,7 +48,9 @@ import {
     calculateResponsiveTileViewDimensions,
     calculateThumbnailSizeForHorizontalView,
     calculateThumbnailSizeForVerticalView,
+    getHiddenLocalParticipants,
     getNumberOfPartipantsForTileView,
+    getRemoteParticipantsForFilmstrip,
     getVerticalViewMaxWidth,
     isFilmstripResizable,
     isStageFilmstripAvailable,
@@ -149,8 +150,12 @@ export function setVerticalViewDimensions() {
         const disableSelfView = getHideSelfView(state);
         const resizableFilmstrip = isFilmstripResizable(state);
         const _verticalViewGrid = showGridInVerticalView(state);
-        const numberOfRemoteParticipants = getRemoteParticipantCountWithFake(state);
+        const remoteParticipants = getRemoteParticipantsForFilmstrip(state);
+        const numberOfRemoteParticipants = remoteParticipants.length;
+        const removedParticipantsCount
+            = state['features/filmstrip'].remoteParticipants.length - remoteParticipants.length;
         const { localScreenShare } = state['features/base/participants'];
+        const { hideLocalCamera, hideLocalScreenShare } = getHiddenLocalParticipants(state);
 
         let gridView = {};
         let thumbnails: any = {};
@@ -163,7 +168,10 @@ export function setVerticalViewDimensions() {
         if (_verticalViewGrid) {
             const { tileView = {} } = state['features/base/config'];
             const { numberOfVisibleTiles = TILE_VIEW_DEFAULT_NUMBER_OF_VISIBLE_TILES } = tileView;
-            const numberOfParticipants = getNumberOfPartipantsForTileView(state);
+            const localHiddenCount = (!disableSelfView && hideLocalCamera ? 1 : 0)
+                + (!disableSelfView && localScreenShare && hideLocalScreenShare ? 1 : 0);
+            const numberOfParticipants = Math.max(0,
+                getNumberOfPartipantsForTileView(state) - removedParticipantsCount - localHiddenCount);
             const maxColumns = getMaxColumnCount(state, {
                 width: filmstripWidth.current,
                 disableResponsiveTiles: false,
@@ -210,16 +218,21 @@ export function setVerticalViewDimensions() {
             thumbnails = calculateThumbnailSizeForVerticalView(videoSpaceWidth, filmstripWidth.current ?? 0,
                 resizableFilmstrip);
 
+            const shouldShowLocalCamera = !disableSelfView && !hideLocalCamera;
+            const shouldShowLocalScreenShare = !disableSelfView && localScreenShare && !hideLocalScreenShare;
+
             remoteVideosContainerWidth
                 = thumbnails?.local?.width + TILE_VERTICAL_CONTAINER_HORIZONTAL_MARGIN + SCROLL_SIZE;
             remoteVideosContainerHeight
-                = clientHeight - (disableSelfView ? 0 : thumbnails?.local?.height) - VERTICAL_FILMSTRIP_VERTICAL_MARGIN;
+                = clientHeight
+                    - (shouldShowLocalCamera ? thumbnails?.local?.height : 0)
+                    - VERTICAL_FILMSTRIP_VERTICAL_MARGIN;
 
             // Account for the height of the local screen share thumbnail when calculating the height of the remote
             // videos container.
-            const localCameraThumbnailHeight = thumbnails?.local?.height;
+            const localCameraThumbnailHeight = shouldShowLocalCamera ? thumbnails?.local?.height : 0;
             const localScreenShareThumbnailHeight
-                = localScreenShare && !disableSelfView ? thumbnails?.local?.height : 0;
+                = shouldShowLocalScreenShare ? thumbnails?.local?.height : 0;
 
             remoteVideosContainerHeight = clientHeight
                 - localCameraThumbnailHeight
@@ -256,12 +269,14 @@ export function setHorizontalViewDimensions() {
         const state = getState();
         const { clientHeight = 0, videoSpaceWidth = 0 } = state['features/base/responsive-ui'];
         const disableSelfView = getHideSelfView(state);
+        const { hideLocalCamera } = getHiddenLocalParticipants(state);
         const thumbnails = calculateThumbnailSizeForHorizontalView(clientHeight);
+        const shouldShowLocalCamera = !disableSelfView && !hideLocalCamera;
         const remoteVideosContainerWidth
-            = videoSpaceWidth - (disableSelfView ? 0 : thumbnails?.local?.width) - HORIZONTAL_FILMSTRIP_MARGIN;
+            = videoSpaceWidth - (shouldShowLocalCamera ? thumbnails?.local?.width : 0) - HORIZONTAL_FILMSTRIP_MARGIN;
         const remoteVideosContainerHeight
             = thumbnails?.local?.height + TILE_VERTICAL_MARGIN + STAGE_VIEW_THUMBNAIL_VERTICAL_BORDER + SCROLL_SIZE;
-        const numberOfRemoteParticipants = getRemoteParticipantCountWithFake(state);
+        const numberOfRemoteParticipants = getRemoteParticipantsForFilmstrip(state).length;
         const hasScroll
             = remoteVideosContainerHeight
                 < (thumbnails?.remote.width + TILE_HORIZONTAL_MARGIN) * numberOfRemoteParticipants;
@@ -358,7 +373,7 @@ export function clickOnVideo(n: number) {
         const { id: localId } = getLocalParticipant(state) ?? {};
 
         // Use the list that correctly represents the current order of the participants as visible in the UI.
-        const { remoteParticipants } = state['features/filmstrip'];
+        const remoteParticipants = getRemoteParticipantsForFilmstrip(state);
         const participants = [ localId, ...remoteParticipants ];
 
         if (participants.length - 1 < n) {

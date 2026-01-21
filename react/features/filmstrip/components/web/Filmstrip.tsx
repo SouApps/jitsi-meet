@@ -40,6 +40,7 @@ import {
     TOP_FILMSTRIP_HEIGHT
 } from '../../constants';
 import {
+    getHiddenLocalParticipants,
     getVerticalViewMaxWidth,
     isFilmstripDisabled,
     isStageFilmstripTopPanel,
@@ -274,6 +275,16 @@ export interface IProps extends WithTranslation {
     _disableSelfView: boolean;
 
     /**
+     * Whether or not to hide the local camera thumbnail.
+     */
+    _hideLocalVideo?: boolean;
+
+    /**
+     * Whether or not to hide the local screenshare thumbnail.
+     */
+    _hideLocalScreenShare?: boolean;
+
+    /**
      * Whether vertical/horizontal filmstrip is disabled through config.
      */
     _filmstripDisabled: boolean;
@@ -461,6 +472,7 @@ interface IState {
 class Filmstrip extends PureComponent <IProps, IState> {
 
     _throttledResize: Function;
+    _lastVisibleRange?: { startIndex: number; stopIndex: number; };
 
     /**
      * Initializes a new {@code Filmstrip} instance.
@@ -518,6 +530,25 @@ class Filmstrip extends PureComponent <IProps, IState> {
     }
 
     /**
+     * Updates visible participants when the rendered list changes.
+     *
+     * @param {IProps} prevProps - The previous props.
+     * @returns {void}
+     */
+    override componentDidUpdate(prevProps: IProps) {
+        if (this.props.filmstripType !== FILMSTRIP_TYPE.MAIN) {
+            return;
+        }
+
+        if (prevProps._remoteParticipants !== this.props._remoteParticipants && this._lastVisibleRange) {
+            const { startIndex, stopIndex } = this._lastVisibleRange;
+            const participants = this._getVisibleParticipants(startIndex, stopIndex);
+
+            this.props.dispatch(setVisibleRemoteParticipants(startIndex, stopIndex, participants));
+        }
+    }
+
+    /**
      * Implements React's {@link Component#componentDidUpdate}.
      *
      * @inheritdoc
@@ -543,6 +574,8 @@ class Filmstrip extends PureComponent <IProps, IState> {
             _alwaysShowResizeBar,
             _currentLayout,
             _disableSelfView,
+            _hideLocalScreenShare,
+            _hideLocalVideo,
             _filmstripDisabled,
             _localScreenShareId,
             _mainFilmstripVisible,
@@ -606,7 +639,7 @@ class Filmstrip extends PureComponent <IProps, IState> {
                     && !_resizableFilmstrip && 'filmstrip-hover',
                     _verticalViewGrid && 'vertical-view-grid') }
                 id = 'remoteVideos'>
-                {!_disableSelfView && !_verticalViewGrid && (
+                {!_disableSelfView && !_verticalViewGrid && !_hideLocalVideo && (
                     <div
                         className = 'filmstrip__videos'
                         id = 'filmstripLocalVideo'>
@@ -620,7 +653,7 @@ class Filmstrip extends PureComponent <IProps, IState> {
                         }
                     </div>
                 )}
-                {_localScreenShareId && !_disableSelfView && !_verticalViewGrid && (
+                {_localScreenShareId && !_disableSelfView && !_verticalViewGrid && !_hideLocalScreenShare && (
                     <div
                         className = 'filmstrip__videos'
                         id = 'filmstripLocalScreenShare'>
@@ -779,6 +812,30 @@ class Filmstrip extends PureComponent <IProps, IState> {
     }
 
     /**
+     * Returns the list of visible remote participants based on indices.
+     *
+     * @param {number} startIndex - The start index.
+     * @param {number} stopIndex - The stop index.
+     * @returns {Array<string>}
+     */
+    _getVisibleParticipants(startIndex: number, stopIndex: number) {
+        const { _remoteParticipants } = this.props;
+
+        if (!Array.isArray(_remoteParticipants) || !_remoteParticipants.length || stopIndex < startIndex) {
+            return [];
+        }
+
+        const start = Math.max(startIndex, 0);
+        const stop = Math.min(stopIndex, _remoteParticipants.length - 1);
+
+        if (stop < start) {
+            return [];
+        }
+
+        return _remoteParticipants.slice(start, stop + 1);
+    }
+
+    /**
      * Toggle the toolbar visibility when tabbing into it.
      *
      * @returns {void}
@@ -844,10 +901,15 @@ class Filmstrip extends PureComponent <IProps, IState> {
      */
     _onListItemsRendered({ visibleStartIndex, visibleStopIndex }: {
         visibleStartIndex: number; visibleStopIndex: number; }) {
-        const { dispatch } = this.props;
+        const { dispatch, filmstripType } = this.props;
         const { startIndex, stopIndex } = this._calculateIndices(visibleStartIndex, visibleStopIndex);
+        this._lastVisibleRange = { startIndex, stopIndex };
 
-        dispatch(setVisibleRemoteParticipants(startIndex, stopIndex));
+        const participants = filmstripType === FILMSTRIP_TYPE.MAIN
+            ? this._getVisibleParticipants(startIndex, stopIndex)
+            : undefined;
+
+        dispatch(setVisibleRemoteParticipants(startIndex, stopIndex, participants));
     }
 
     /**
@@ -867,12 +929,17 @@ class Filmstrip extends PureComponent <IProps, IState> {
         visibleRowStartIndex: number;
         visibleRowStopIndex: number;
     }) {
-        const { _columns, dispatch } = this.props;
+        const { _columns, dispatch, filmstripType } = this.props;
         const start = (visibleRowStartIndex * _columns) + visibleColumnStartIndex;
         const stop = (visibleRowStopIndex * _columns) + visibleColumnStopIndex;
         const { startIndex, stopIndex } = this._calculateIndices(start, stop);
+        this._lastVisibleRange = { startIndex, stopIndex };
 
-        dispatch(setVisibleRemoteParticipants(startIndex, stopIndex));
+        const participants = filmstripType === FILMSTRIP_TYPE.MAIN
+            ? this._getVisibleParticipants(startIndex, stopIndex)
+            : undefined;
+
+        dispatch(setVisibleRemoteParticipants(startIndex, stopIndex, participants));
     }
 
     /**
@@ -1120,6 +1187,15 @@ function _mapStateToProps(state: IReduxState, ownProps: any) {
     const _currentLayout = getCurrentLayout(state);
     const _isVerticalFilmstrip = _currentLayout === LAYOUTS.VERTICAL_FILMSTRIP_VIEW
         || (filmstripType === FILMSTRIP_TYPE.MAIN && _currentLayout === LAYOUTS.STAGE_FILMSTRIP_VIEW);
+    const {
+        hideLocalCamera: _hideLocalVideo,
+        hideLocalScreenShare: _hideLocalScreenShare
+    } = filmstripType === FILMSTRIP_TYPE.MAIN
+        ? getHiddenLocalParticipants(state)
+        : {
+            hideLocalCamera: false,
+            hideLocalScreenShare: false
+        };
 
     return {
         _className: className,
@@ -1127,6 +1203,8 @@ function _mapStateToProps(state: IReduxState, ownProps: any) {
         _currentLayout,
         _disableSelfView: disableSelfView,
         _filmstripDisabled: filmstripDisabled,
+        _hideLocalScreenShare,
+        _hideLocalVideo,
         _hasScroll,
         _iAmRecorder: Boolean(iAmRecorder),
         _isFilmstripButtonEnabled: isButtonEnabled('filmstrip', state),

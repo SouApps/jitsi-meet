@@ -301,9 +301,11 @@ ReducerRegistry.register<IFilmstripState>(
                 }
             };
         case SET_VISIBLE_REMOTE_PARTICIPANTS: {
-            const { endIndex, startIndex } = action;
+            const { endIndex, participants, startIndex } = action;
             const { remoteParticipants } = state;
-            const visibleRemoteParticipants = new Set(remoteParticipants.slice(startIndex, endIndex + 1));
+            const visibleRemoteParticipants = new Set(
+                participants ?? remoteParticipants.slice(startIndex, endIndex + 1)
+            );
 
             return {
                 ...state,

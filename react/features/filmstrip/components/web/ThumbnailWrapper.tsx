@@ -7,7 +7,12 @@ import { getHideSelfView } from '../../../base/settings/functions.any';
 import { LAYOUTS } from '../../../video-layout/constants';
 import { getCurrentLayout } from '../../../video-layout/functions.web';
 import { FILMSTRIP_TYPE, TILE_ASPECT_RATIO, TILE_HORIZONTAL_MARGIN } from '../../constants';
-import { getActiveParticipantsIds, showGridInVerticalView } from '../../functions.web';
+import {
+    getActiveParticipantsIds,
+    getHiddenLocalParticipants,
+    getRemoteParticipantsForFilmstrip,
+    showGridInVerticalView
+} from '../../functions.web';
 
 import Thumbnail from './Thumbnail';
 
@@ -138,14 +143,14 @@ class ThumbnailWrapper extends Component<IProps> {
 function _mapStateToProps(state: IReduxState, ownProps: { columnIndex: number;
     data: { filmstripType: string; }; index?: number; rowIndex: number; }) {
     const _currentLayout = getCurrentLayout(state);
-    const { remoteParticipants: remote } = state['features/filmstrip'];
     const activeParticipants = getActiveParticipantsIds(state);
     const disableSelfView = getHideSelfView(state);
     const _verticalViewGrid = showGridInVerticalView(state);
     const filmstripType = ownProps.data?.filmstripType;
     const stageFilmstrip = filmstripType === FILMSTRIP_TYPE.STAGE;
     const sortedActiveParticipants = activeParticipants.sort();
-    const remoteParticipants = stageFilmstrip ? sortedActiveParticipants : remote;
+    const filteredRemoteParticipants = getRemoteParticipantsForFilmstrip(state);
+    const remoteParticipants = stageFilmstrip ? sortedActiveParticipants : filteredRemoteParticipants;
     const remoteParticipantsLength = remoteParticipants.length;
     const localId = getLocalParticipant(state)?.id;
 
@@ -168,7 +173,16 @@ function _mapStateToProps(state: IReduxState, ownProps: { columnIndex: number;
         let horizontalOffset, thumbnailWidth;
         const { iAmRecorder, disableTileEnlargement } = state['features/base/config'];
         const { localScreenShare } = state['features/base/participants'];
-        const localParticipantsLength = localScreenShare ? 2 : 1;
+        const { hideLocalCamera, hideLocalScreenShare } = !stageFilmstrip && filmstripType === FILMSTRIP_TYPE.MAIN
+            ? getHiddenLocalParticipants(state)
+            : {
+                hideLocalCamera: false,
+                hideLocalScreenShare: false
+            };
+        const showLocalTiles = !disableSelfView && !iAmRecorder;
+        const showLocalCamera = showLocalTiles && !hideLocalCamera;
+        const showLocalScreenShare = showLocalTiles && localScreenShare && !hideLocalScreenShare;
+        const localTilesCount = (showLocalCamera ? 1 : 0) + (showLocalScreenShare ? 1 : 0);
 
         let participantsLength;
 
@@ -177,13 +191,7 @@ function _mapStateToProps(state: IReduxState, ownProps: { columnIndex: number;
             participantsLength = remoteParticipantsLength;
         } else {
             // We need to include the local screenshare participant in tile view.
-            participantsLength = remoteParticipantsLength
-
-            // Add local camera and screen share to total participant count when self view is not disabled.
-            + (disableSelfView ? 0 : localParticipantsLength)
-
-            // Removes iAmRecorder from the total participants count.
-            - (iAmRecorder ? 1 : 0);
+            participantsLength = remoteParticipantsLength + localTilesCount;
         }
 
         if (rowIndex === rows - 1) { // center the last row
@@ -226,15 +234,12 @@ function _mapStateToProps(state: IReduxState, ownProps: { columnIndex: number;
         }
 
         // When the thumbnails are reordered, local participant is inserted at index 0.
-        const localIndex = disableSelfView ? remoteParticipantsLength : 0;
+        const localIndex = showLocalCamera ? 0 : -1;
 
-        // Local screen share is inserted at index 1 after the local camera.
-        const localScreenShareIndex = disableSelfView ? remoteParticipantsLength : 1;
-        const remoteIndex = !iAmRecorder && !disableSelfView
-            ? index - localParticipantsLength
-            : index;
+        // Local screen share is inserted after the local camera when shown.
+        const localScreenShareIndex = showLocalScreenShare ? (showLocalCamera ? 1 : 0) : -1;
 
-        if (!iAmRecorder && index === localIndex) {
+        if (showLocalCamera && index === localIndex) {
             return {
                 _disableSelfView: disableSelfView,
                 _filmstripType: filmstripType,
@@ -244,7 +249,7 @@ function _mapStateToProps(state: IReduxState, ownProps: { columnIndex: number;
             };
         }
 
-        if (!iAmRecorder && localScreenShare && index === localScreenShareIndex) {
+        if (showLocalScreenShare && index === localScreenShareIndex) {
             return {
                 _disableSelfView: disableSelfView,
                 _filmstripType: filmstripType,
@@ -254,6 +259,8 @@ function _mapStateToProps(state: IReduxState, ownProps: { columnIndex: number;
                 _thumbnailWidth: thumbnailWidth
             };
         }
+
+        const remoteIndex = index - localTilesCount;
 
         return {
             _filmstripType: filmstripType,

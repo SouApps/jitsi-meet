@@ -12,7 +12,7 @@ import {
     FILMSTRIP_TYPE,
     TOOLBAR_HEIGHT,
     TOOLBAR_HEIGHT_MOBILE } from '../../constants';
-import { isFilmstripResizable, showGridInVerticalView } from '../../functions.web';
+import { getRemoteParticipantsForFilmstrip, isFilmstripResizable, showGridInVerticalView } from '../../functions.web';
 
 import Filmstrip from './Filmstrip';
 
@@ -107,7 +107,8 @@ const MainFilmstrip = (props: IProps) => (
  */
 function _mapStateToProps(state: IReduxState, _ownProps: any) {
     const { toolbarButtons } = state['features/toolbox'];
-    const { remoteParticipants, width: verticalFilmstripWidth } = state['features/filmstrip'];
+    const { width: verticalFilmstripWidth } = state['features/filmstrip'];
+    const remoteParticipants = getRemoteParticipantsForFilmstrip(state);
     const reduceHeight = state['features/toolbox'].visible && toolbarButtons?.length;
     const {
         gridDimensions: dimensions = { columns: undefined,
