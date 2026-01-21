@@ -1,0 +1,23 @@
+FROM node:22-bookworm AS build
+
+WORKDIR /app
+
+RUN apt-get update \
+  && apt-get install -y --no-install-recommends git python3 make g++ \
+  && rm -rf /var/lib/apt/lists/*
+
+COPY package.json package-lock.json ./
+RUN npm ci
+
+COPY . .
+
+RUN make
+
+RUN mkdir -p /out/jitsi-meet/css \
+  && cp -r *.js *.html manifest.json resources/*.txt fonts images libs static sounds LICENSE lang /out/jitsi-meet \
+  && cp css/all.css /out/jitsi-meet/css
+
+FROM jitsi/web:stable
+
+RUN rm -rf /usr/share/jitsi-meet/*
+COPY --from=build /out/jitsi-meet/ /usr/share/jitsi-meet/
