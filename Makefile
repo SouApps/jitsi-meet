@@ -12,7 +12,7 @@ MEET_MODELS_DIR  = react/features/stream-effects/virtual-background/vendor/model
 FACE_MODELS_DIR = node_modules/@vladmandic/human-models/models
 NODE_SASS = ./node_modules/.bin/sass
 NPM = npm
-NODE_MAX_OLD_SPACE_SIZE ?= 4096
+NODE_MAX_OLD_SPACE_SIZE ?= 6144
 NODE_OPTIONS ?= --max-old-space-size=$(NODE_MAX_OLD_SPACE_SIZE)
 OUTPUT_DIR = .
 STYLES_BUNDLE = css/all.bundle.css
