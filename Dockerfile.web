@@ -6,12 +6,16 @@ RUN apt-get update \
   && apt-get install -y --no-install-recommends git python3 make g++ \
   && rm -rf /var/lib/apt/lists/*
 
+ARG NODE_MAX_OLD_SPACE_SIZE=4096
+
 COPY package.json package-lock.json ./
 RUN npm ci --legacy-peer-deps
 
 COPY . .
 
-RUN make
+RUN make clean \
+  && NODE_OPTIONS=--max-old-space-size=${NODE_MAX_OLD_SPACE_SIZE} ./node_modules/.bin/webpack --progress \
+  && make deploy
 
 RUN mkdir -p /out/jitsi-meet/css \
   && cp -r *.js *.html manifest.json resources/*.txt fonts images libs static sounds LICENSE lang /out/jitsi-meet \
