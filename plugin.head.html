@@ -1,0 +1,466 @@
+<script>
+(function() {
+  if (window.__edukeiEndConferenceInstalled) {
+    return;
+  }
+  window.__edukeiEndConferenceInstalled = true;
+
+  const CONTROL_TYPE = 'EDUKEI_END_CONFERENCE';
+  const CANCEL_TYPE = 'EDUKEI_END_CONFERENCE_CANCEL';
+  const MSG_NAME = 'edukei-end-conference';
+  const MAX_SECONDS = 6 * 60 * 60;
+  const OVERLAY_ID = 'edukei-end-conference-overlay';
+  const STYLE_ID = 'edukei-end-conference-style';
+  const TITLE_TEXT = 'Aula encerrando';
+  const DEFAULT_TEMPLATE = 'A aula termina em {mmss}';
+
+  const allowedOrigins = new Set();
+
+  try {
+    if (document.referrer) {
+      allowedOrigins.add(new URL(document.referrer).origin);
+    }
+  } catch (e) {
+    // ignore
+  }
+
+  String(window.EDUKEI_END_CONFERENCE_ALLOWED_ORIGINS || '')
+    .split(',')
+    .map((v) => v.trim())
+    .filter(Boolean)
+    .forEach((origin) => allowedOrigins.add(origin));
+
+  function toFiniteNumber(value) {
+    if (value === null || value === undefined) return null;
+    if (typeof value === 'number') {
+      return Number.isFinite(value) ? value : null;
+    }
+    if (typeof value === 'string') {
+      const trimmed = value.trim();
+      if (!trimmed) return null;
+      const numeric = Number(trimmed);
+      if (Number.isFinite(numeric)) return numeric;
+      return null;
+    }
+    const numeric = Number(value);
+    return Number.isFinite(numeric) ? numeric : null;
+  }
+
+  function normalizeNumericEndAt(numeric, now) {
+    if (!Number.isFinite(numeric) || numeric <= 0) return null;
+    if (numeric <= MAX_SECONDS) {
+      return { endAt: now + Math.floor(numeric * 1000), isRelative: true };
+    }
+    if (numeric < 1e12) {
+      return { endAt: Math.floor(numeric * 1000), isRelative: false };
+    }
+    return { endAt: Math.floor(numeric), isRelative: false };
+  }
+
+  function normalizeEndAt(value, now) {
+    if (value === null || value === undefined) return null;
+    if (value instanceof Date) {
+      const epoch = value.getTime();
+      return Number.isFinite(epoch) ? { endAt: epoch, isRelative: false } : null;
+    }
+    if (typeof value === 'string') {
+      const trimmed = value.trim();
+      if (!trimmed) return null;
+      const numeric = toFiniteNumber(trimmed);
+      if (numeric != null) {
+        return normalizeNumericEndAt(numeric, now);
+      }
+      const parsed = Date.parse(trimmed);
+      return Number.isFinite(parsed) ? { endAt: parsed, isRelative: false } : null;
+    }
+    return normalizeNumericEndAt(Number(value), now);
+  }
+
+  function resolveExtraSeconds(payload) {
+    const candidates = [
+      payload && payload.extraSeconds,
+      payload && payload.graceSeconds,
+      payload && payload.extra_minutes,
+      payload && payload.grace_minutes
+    ];
+
+    const extraMinutes = toFiniteNumber(payload && payload.extraMinutes);
+    if (extraMinutes != null) candidates.push(extraMinutes * 60);
+    const graceMinutes = toFiniteNumber(payload && payload.graceMinutes);
+    if (graceMinutes != null) candidates.push(graceMinutes * 60);
+
+    const defaultExtraSeconds = toFiniteNumber(window.EDUKEI_END_CONFERENCE_DEFAULT_EXTRA_SECONDS);
+    if (defaultExtraSeconds != null) candidates.push(defaultExtraSeconds);
+    const defaultExtraMinutes = toFiniteNumber(window.EDUKEI_END_CONFERENCE_DEFAULT_EXTRA_MINUTES);
+    if (defaultExtraMinutes != null) candidates.push(defaultExtraMinutes * 60);
+
+    for (const candidate of candidates) {
+      const parsed = toFiniteNumber(candidate);
+      if (parsed != null && parsed > 0) {
+        return Math.min(Math.floor(parsed), MAX_SECONDS);
+      }
+    }
+    return 0;
+  }
+
+  function resolveCountdownPayload(payload) {
+    if (!payload) return null;
+    const now = Date.now();
+    const endAtCandidate =
+      payload.endAt ||
+      payload.endAtEpochMs ||
+      payload.endAtMs ||
+      payload.meetingEndAtEpochMs ||
+      payload.meetingEndAt;
+
+    let resolved = normalizeEndAt(endAtCandidate, now);
+    if (!resolved) {
+      const secondsRaw = toFiniteNumber(payload.seconds);
+      if (secondsRaw != null) {
+        const sanitized = Math.max(0, Math.min(MAX_SECONDS, Math.floor(secondsRaw)));
+        resolved = { endAt: now + sanitized * 1000, isRelative: true };
+      }
+    }
+
+    if (!resolved) return null;
+
+    const extraSeconds = resolveExtraSeconds(payload);
+    const shouldApplyExtra = resolved.isRelative;
+    const endAt = shouldApplyExtra && extraSeconds > 0
+      ? resolved.endAt + extraSeconds * 1000
+      : resolved.endAt;
+
+    return {
+      id: payload.id || `auto-${Date.now()}`,
+      endAt,
+      message: payload.message || null
+    };
+  }
+
+  function isOriginAllowed(origin) {
+    if (!origin) return false;
+    if (allowedOrigins.size === 0) return true;
+    return allowedOrigins.has(origin);
+  }
+
+  function ensureStyle() {
+    if (document.getElementById(STYLE_ID)) return;
+    const style = document.createElement('style');
+    style.id = STYLE_ID;
+    style.textContent = `
+      #${OVERLAY_ID} {
+        position: fixed;
+        top: 16px;
+        left: 50%;
+        transform: translateX(-50%);
+        z-index: 2147483647;
+        background: rgba(10, 20, 56, 0.92);
+        color: #fff;
+        border: 1px solid rgba(86, 138, 255, 0.35);
+        border-radius: 10px;
+        padding: 12px 16px;
+        font-family: system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif;
+        font-weight: 600;
+        font-size: 14px;
+        letter-spacing: 0.2px;
+        box-shadow: 0 10px 24px rgba(0, 0, 0, 0.35);
+        pointer-events: none;
+        display: none;
+        min-width: 220px;
+        text-align: center;
+      }
+      #${OVERLAY_ID} .edukei-end-title {
+        font-size: 12px;
+        font-weight: 700;
+        opacity: 0.8;
+        text-transform: uppercase;
+        margin-bottom: 4px;
+      }
+      #${OVERLAY_ID} .edukei-end-message {
+        font-size: 15px;
+        font-weight: 700;
+      }
+    `;
+    document.head.appendChild(style);
+  }
+
+  function ensureOverlay() {
+    let overlay = document.getElementById(OVERLAY_ID);
+    if (overlay) return overlay;
+    overlay = document.createElement('div');
+    overlay.id = OVERLAY_ID;
+    overlay.innerHTML = `
+      <div class="edukei-end-title">${TITLE_TEXT}</div>
+      <div class="edukei-end-message"></div>
+    `;
+    document.body.appendChild(overlay);
+    return overlay;
+  }
+
+  function formatTime(totalSeconds) {
+    const clamped = Math.max(0, Math.floor(totalSeconds));
+    const minutes = Math.floor(clamped / 60);
+    const seconds = clamped % 60;
+    return `${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`;
+  }
+
+  function resolveMessage(template, remainingSeconds) {
+    const mmss = formatTime(remainingSeconds);
+    const base = typeof template === 'string' && template.trim()
+      ? template
+      : DEFAULT_TEMPLATE;
+    if (base.includes('{mmss}')) {
+      return base.replace(/\{mmss\}/g, mmss);
+    }
+    return `${base} (${mmss})`;
+  }
+
+  function getConferenceApi() {
+    return window.APP && APP.conference ? APP.conference : null;
+  }
+
+  function getRoomApi() {
+    const conference = getConferenceApi();
+    if (!conference) return null;
+    if (conference._room) return conference._room;
+    return null;
+  }
+
+  function getParticipants() {
+    const conference = getConferenceApi();
+    if (!conference) return [];
+    if (typeof conference.getParticipants === 'function') {
+      return conference.getParticipants() || [];
+    }
+    if (typeof conference.listMembers === 'function') {
+      return conference.listMembers() || [];
+    }
+    const room = getRoomApi();
+    if (room && typeof room.getParticipants === 'function') {
+      return room.getParticipants() || [];
+    }
+    return [];
+  }
+
+  function sendEndpointMessage(to, payload) {
+    const conference = getConferenceApi();
+    if (conference && typeof conference.sendEndpointMessage === 'function') {
+      conference.sendEndpointMessage(to, payload);
+      return true;
+    }
+    const room = getRoomApi();
+    if (room && typeof room.sendEndpointMessage === 'function') {
+      room.sendEndpointMessage(to, payload);
+      return true;
+    }
+    return false;
+  }
+
+  function getEventBinder() {
+    const conference = getConferenceApi();
+    if (conference && typeof conference.on === 'function') {
+      return conference.on.bind(conference);
+    }
+    const room = getRoomApi();
+    if (room && typeof room.on === 'function') {
+      return room.on.bind(room);
+    }
+    return null;
+  }
+
+  function isModerator() {
+    try {
+      const state = APP.store && APP.store.getState ? APP.store.getState() : null;
+      const participants = state && state['features/base/participants'];
+      if (!Array.isArray(participants)) return false;
+      const me = participants.find((p) => p && p.local);
+      return Boolean(me && me.isModerator);
+    } catch (e) {
+      return false;
+    }
+  }
+
+  let activeCountdown = null;
+  let intervalId = null;
+  let pendingPayload = null;
+  let listenerAttached = false;
+
+  function stopTimer() {
+    if (intervalId) {
+      clearInterval(intervalId);
+      intervalId = null;
+    }
+  }
+
+  function hideOverlay() {
+    const overlay = document.getElementById(OVERLAY_ID);
+    if (overlay) overlay.style.display = 'none';
+  }
+
+  function endConferenceIfModerator() {
+    if (!isModerator()) return;
+    try {
+      if (APP && APP.conference && typeof APP.conference.end === 'function') {
+        APP.conference.end();
+      }
+    } catch (e) {
+      // ignore
+    }
+  }
+
+  function tickCountdown() {
+    if (!activeCountdown) return;
+    const now = Date.now();
+    const remainingMs = activeCountdown.endAt - now;
+    const remainingSeconds = Math.max(0, Math.ceil(remainingMs / 1000));
+    const overlay = ensureOverlay();
+    overlay.querySelector('.edukei-end-message').textContent =
+      resolveMessage(activeCountdown.message, remainingSeconds);
+    overlay.style.display = 'block';
+    if (remainingSeconds <= 0) {
+      stopTimer();
+      hideOverlay();
+      activeCountdown = null;
+      endConferenceIfModerator();
+    }
+  }
+
+  function startCountdown(payload) {
+    const resolved = resolveCountdownPayload(payload);
+    if (!resolved) return;
+    activeCountdown = resolved;
+    ensureStyle();
+    tickCountdown();
+    if (!intervalId) {
+      intervalId = setInterval(tickCountdown, 1000);
+    }
+  }
+
+  function cancelCountdown() {
+    stopTimer();
+    activeCountdown = null;
+    hideOverlay();
+  }
+
+  function broadcastPayload(payload) {
+    const participants = getParticipants();
+    participants.forEach((p) => {
+      const id = typeof p.getId === 'function' ? p.getId() : (p.id || p._id);
+      if (id) {
+        try {
+          sendEndpointMessage(id, { name: MSG_NAME, data: payload });
+        } catch (e) {
+          // ignore
+        }
+      }
+    });
+  }
+
+  function handleIncomingPayload(payload) {
+    if (!payload) return;
+    if (payload.action === 'cancel') {
+      cancelCountdown();
+      return;
+    }
+    startCountdown(payload);
+  }
+
+  function handleParentMessage(data) {
+    const now = Date.now();
+    const payloadBase = {
+      ...data,
+      id: data && data.id ? String(data.id) : `edukei-${now}`,
+      message: typeof data.message === 'string' ? data.message : null,
+      initiatedBy: 'parent'
+    };
+    const resolved = resolveCountdownPayload(payloadBase);
+    if (!resolved) return;
+    const payload = {
+      ...payloadBase,
+      endAt: resolved.endAt
+    };
+    startCountdown(payload);
+    if (isModerator()) {
+      broadcastPayload(payload);
+    }
+  }
+
+  function handleParentCancel(data) {
+    cancelCountdown();
+    if (isModerator()) {
+      broadcastPayload({
+        action: 'cancel',
+        id: data && data.id ? String(data.id) : `cancel-${Date.now()}`
+      });
+    }
+  }
+
+  function attachConferenceListener() {
+    if (listenerAttached) return true;
+    const on = getEventBinder();
+    if (!on) return false;
+
+    const endpointEvent = (window.JitsiMeetJS &&
+      JitsiMeetJS.events &&
+      JitsiMeetJS.events.conference &&
+      JitsiMeetJS.events.conference.ENDPOINT_MESSAGE_RECEIVED) || 'endpoint-message-received';
+
+    const userJoinedEvent = (window.JitsiMeetJS &&
+      JitsiMeetJS.events &&
+      JitsiMeetJS.events.conference &&
+      JitsiMeetJS.events.conference.USER_JOINED) || 'user-joined';
+
+    on(endpointEvent, function(_, payload) {
+      if (!payload || payload.name !== MSG_NAME) return;
+      handleIncomingPayload(payload.data || null);
+    });
+
+    on(userJoinedEvent, function(id) {
+      if (!id || !activeCountdown) return;
+      if (!isModerator()) return;
+      try {
+        sendEndpointMessage(id, { name: MSG_NAME, data: activeCountdown });
+      } catch (e) {
+        // ignore
+      }
+    });
+
+    listenerAttached = true;
+    return true;
+  }
+
+  function tryAttach() {
+    if (attachConferenceListener()) {
+      if (pendingPayload) {
+        handleParentMessage(pendingPayload);
+        pendingPayload = null;
+      }
+      return true;
+    }
+    return false;
+  }
+
+  const attachTimer = setInterval(() => {
+    if (tryAttach()) {
+      clearInterval(attachTimer);
+    }
+  }, 1000);
+
+  window.addEventListener('message', (event) => {
+    if (!event || !event.data) return;
+    if (!isOriginAllowed(event.origin)) return;
+    const data = event.data;
+    if (data.type === CONTROL_TYPE) {
+      if (!tryAttach()) {
+        pendingPayload = data;
+      }
+      // Dispara imediatamente mesmo sem listener de conference.
+      handleParentMessage(data);
+      return;
+    }
+    if (data.type === CANCEL_TYPE) {
+      handleParentCancel(data);
+    }
+  });
+})();
+</script>
