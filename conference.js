@@ -169,6 +169,59 @@ import { muteLocal } from './react/features/video-menu/actions.any';
 const logger = Logger.getLogger('app:conference-web');
 let room;
 
+const EDUKEI_END_CONFERENCE_TYPE = 'EDUKEI_END_CONFERENCE';
+const EDUKEI_END_CONFERENCE_CANCEL_TYPE = 'EDUKEI_END_CONFERENCE_CANCEL';
+const EDUKEI_END_CONFERENCE_NOTIFICATION_ID = 'edukei-end-conference-countdown';
+const EDUKEI_END_CONFERENCE_DEFAULT_MESSAGE = 'A aula termina em {mmss}';
+const EDUKEI_END_CONFERENCE_TITLE = 'Encerramento da aula';
+
+function normalizeEpochMs(value) {
+    const numeric = Number(value);
+
+    if (!Number.isFinite(numeric) || numeric <= 0) {
+        return undefined;
+    }
+
+    if (numeric < 1e12) {
+        return Math.trunc(numeric * 1000);
+    }
+
+    return Math.trunc(numeric);
+}
+
+function formatCountdownMmss(msRemaining) {
+    const safeMs = Math.max(0, msRemaining);
+    const totalSeconds = Math.floor(safeMs / 1000);
+    const minutes = Math.floor(totalSeconds / 60);
+    const seconds = totalSeconds % 60;
+
+    return `${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`;
+}
+
+function getMeetingEndMessage(template, mmss) {
+    const base = typeof template === 'string' && template.trim()
+        ? template
+        : EDUKEI_END_CONFERENCE_DEFAULT_MESSAGE;
+
+    if (base.includes('{mmss}')) {
+        return base.replace(/\{mmss\}/g, mmss);
+    }
+
+    return `${base} (${mmss})`;
+}
+
+function getOriginFromReferrer(referrer) {
+    if (!referrer) {
+        return undefined;
+    }
+
+    try {
+        return new URL(referrer).origin;
+    } catch {
+        return undefined;
+    }
+}
+
 /*
  * Logic to open a desktop picker put on the window global for
  * lib-jitsi-meet to detect and invoke.
@@ -384,6 +437,117 @@ export default {
     isCreatingLocalTrack: false,
 
     isSharingScreen: false,
+    _meetingEndWarningInterval: undefined,
+    _meetingEndWarningData: undefined,
+    _meetingEndPostMessageListener: undefined,
+    _meetingEndTrustedOrigin: undefined,
+
+    _registerMeetingEndPostMessageListener() {
+        if (this._meetingEndPostMessageListener) {
+            return;
+        }
+
+        this._meetingEndTrustedOrigin = getOriginFromReferrer(document.referrer);
+        this._meetingEndPostMessageListener = this._onMeetingEndPostMessage.bind(this);
+        window.addEventListener('message', this._meetingEndPostMessageListener);
+    },
+
+    _unregisterMeetingEndPostMessageListener() {
+        if (!this._meetingEndPostMessageListener) {
+            return;
+        }
+
+        window.removeEventListener('message', this._meetingEndPostMessageListener);
+        this._meetingEndPostMessageListener = undefined;
+        this._meetingEndTrustedOrigin = undefined;
+    },
+
+    _clearMeetingEndWarningNotification() {
+        if (this._meetingEndWarningInterval) {
+            window.clearInterval(this._meetingEndWarningInterval);
+            this._meetingEndWarningInterval = undefined;
+        }
+
+        this._meetingEndWarningData = undefined;
+        APP.store.dispatch(hideNotification(EDUKEI_END_CONFERENCE_NOTIFICATION_ID));
+    },
+
+    _startMeetingEndWarning({ endAt, id, message }) {
+        const normalizedEndAt = normalizeEpochMs(endAt);
+
+        if (!normalizedEndAt) {
+            return;
+        }
+
+        this._clearMeetingEndWarningNotification();
+
+        this._meetingEndWarningData = {
+            endAt: normalizedEndAt,
+            id: id === undefined || id === null ? undefined : String(id),
+            message: typeof message === 'string' && message.trim()
+                ? message
+                : EDUKEI_END_CONFERENCE_DEFAULT_MESSAGE
+        };
+
+        const updateNotification = () => {
+            const remainingMs = Math.max(0, this._meetingEndWarningData.endAt - Date.now());
+            const mmss = formatCountdownMmss(remainingMs);
+            const description = getMeetingEndMessage(this._meetingEndWarningData.message, mmss);
+
+            APP.store.dispatch(showWarningNotification({
+                description,
+                title: EDUKEI_END_CONFERENCE_TITLE,
+                uid: EDUKEI_END_CONFERENCE_NOTIFICATION_ID
+            }, NOTIFICATION_TIMEOUT_TYPE.STICKY));
+        };
+
+        updateNotification();
+        this._meetingEndWarningInterval = window.setInterval(updateNotification, 1000);
+    },
+
+    _onMeetingEndPostMessage(event = {}) {
+        if (window.parent === window || event.source !== window.parent) {
+            return;
+        }
+
+        if (this._meetingEndTrustedOrigin && event.origin !== this._meetingEndTrustedOrigin) {
+            return;
+        }
+
+        let payload = event.data;
+
+        if (typeof payload === 'string') {
+            try {
+                payload = JSON.parse(payload);
+            } catch {
+                return;
+            }
+        }
+
+        if (!payload || typeof payload !== 'object') {
+            return;
+        }
+
+        if (payload.type === EDUKEI_END_CONFERENCE_TYPE) {
+            this._startMeetingEndWarning(payload);
+
+            return;
+        }
+
+        if (payload.type !== EDUKEI_END_CONFERENCE_CANCEL_TYPE) {
+            return;
+        }
+
+        const currentWarningId = this._meetingEndWarningData?.id;
+        const incomingWarningId
+            = payload.id === undefined || payload.id === null ? undefined : String(payload.id);
+
+        if (incomingWarningId && currentWarningId && incomingWarningId !== currentWarningId) {
+            return;
+        }
+
+        this._clearMeetingEndWarningNotification();
+    },
 
     /**
      * Returns an object containing a promise which resolves with the created tracks &
@@ -545,6 +709,7 @@ export default {
         logger.debug(`Executed conference.init with roomName: ${roomName} (performance.now=${startTime})`);
 
         this.roomName = roomName;
+        this._registerMeetingEndPostMessageListener();
 
         try {
             // Initialize the device list first. This way, when creating tracks based on preferred devices, loose label
@@ -2129,6 +2294,8 @@ export default {
         APP.store.dispatch(disableReceiver());
 
         this._stopProxyConnection();
+        this._clearMeetingEndWarningNotification();
+        this._unregisterMeetingEndPostMessageListener();
 
         APP.store.dispatch(destroyLocalTracks());
         this._localTracksInitialized = false;
@@ -2186,6 +2353,7 @@ export default {
      * @returns {Promise}
      */
     leaveRoom(doDisconnect = true, reason = '') {
+        this._clearMeetingEndWarningNotification();
         APP.store.dispatch(conferenceWillLeave(room));
 
         const maybeDisconnect = () => {
