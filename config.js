@@ -486,6 +486,12 @@ var config = {
     // autoCaptionOnRecord: false,
 
     // Transcription options.
+    transcription: {
+        enabled: false,
+        autoTranscribeOnRecord: false,
+        autoCaptionOnTranscribe: false,
+        disableClosedCaptions: true,
+    },
     // transcription: {
     //     // Whether the feature should be enabled or not.
     //     enabled: false,
